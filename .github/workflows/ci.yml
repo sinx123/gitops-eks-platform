@@ -1,0 +1,79 @@
+name: ci-build-deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**"]
+  pull_request:
+    paths: ["app/**"]
+
+permissions:
+  id-token: write   # OIDC
+  contents: write   # commit updated image tag
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [catalog, orders]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r app/${{ matrix.service }}/requirements-dev.txt
+      - run: pytest app/${{ matrix.service }}
+
+  build-and-push:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      registry: ${{ steps.ecr.outputs.registry }}
+    strategy:
+      matrix:
+        service: [catalog, orders]
+    steps:
+      - uses: actions/checkout@v4
+      - id: vars
+        run: echo "tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build image
+        run: |
+          docker build -t ${{ steps.ecr.outputs.registry }}/gitops-demo/${{ matrix.service }}:${{ steps.vars.outputs.tag }} app/${{ matrix.service }}
+      - name: Scan image (fail on CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.ecr.outputs.registry }}/gitops-demo/${{ matrix.service }}:${{ steps.vars.outputs.tag }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Push image
+        run: docker push ${{ steps.ecr.outputs.registry }}/gitops-demo/${{ matrix.service }}:${{ steps.vars.outputs.tag }}
+
+  update-manifests:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump image tags in dev values (GitOps commit)
+        run: |
+          TAG=${{ needs.build-and-push.outputs.tag }}
+          REG=${{ needs.build-and-push.outputs.registry }}
+          yq -i ".global.registry = \"$REG\"" helm/microservices/values.yaml
+          yq -i ".services.catalog.tag = \"$TAG\" | .services.orders.tag = \"$TAG\"" helm/microservices/values-dev.yaml
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add helm/
+          git commit -m "chore(dev): deploy image $TAG [skip ci]" || echo "nothing to commit"
+          git push

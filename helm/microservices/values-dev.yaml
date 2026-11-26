@@ -1,0 +1,9 @@
+global:
+  environment: dev
+services:
+  catalog:
+    tag: latest
+    replicas: 1
+  orders:
+    tag: latest
+    replicas: 1

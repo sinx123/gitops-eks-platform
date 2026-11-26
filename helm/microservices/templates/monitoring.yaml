@@ -1,0 +1,45 @@
+{{- if .Values.monitoring.enabled }}
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+{{- end }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: microservices-alerts
+spec:
+  groups:
+    - name: microservices.rules
+      rules:
+        - alert: HighErrorRate
+          expr: |
+            sum by (service) (rate(http_requests_total{status=~"5..", namespace="{{ .Release.Namespace }}"}[5m]))
+              /
+            sum by (service) (rate(http_requests_total{namespace="{{ .Release.Namespace }}"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ "{{ $labels.service }}" }} 5xx error rate above 5%"
+        - alert: PodNotReady
+          expr: kube_deployment_status_replicas_unavailable{namespace="{{ .Release.Namespace }}"} > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Deployment {{ "{{ $labels.deployment }}" }} has unavailable replicas"
+{{- end }}

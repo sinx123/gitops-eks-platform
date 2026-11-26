@@ -1,0 +1,13 @@
+global:
+  environment: prod
+services:
+  catalog:
+    tag: latest
+    replicas: 3
+  orders:
+    tag: latest
+    replicas: 3
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 8

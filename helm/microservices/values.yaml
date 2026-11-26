@@ -1,0 +1,44 @@
+global:
+  registry: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com   # overwritten by CI
+  environment: dev
+
+services:
+  catalog:
+    image: gitops-demo/catalog
+    tag: latest                      # overwritten by CI with the git SHA
+    port: 5000
+    replicas: 2
+    env: {}
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
+  orders:
+    image: gitops-demo/orders
+    tag: latest
+    port: 5000
+    replicas: 2
+    env:
+      CATALOG_URL: http://catalog
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+  paths:
+    - { path: /catalog, service: catalog }
+    - { path: /orders, service: orders }
+
+monitoring:
+  enabled: true

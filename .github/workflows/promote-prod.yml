@@ -1,0 +1,28 @@
+name: promote-to-prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (git SHA, 8 chars) currently running in dev"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update prod values
+        run: |
+          yq -i ".services.catalog.tag = \"${{ inputs.tag }}\" | .services.orders.tag = \"${{ inputs.tag }}\"" helm/microservices/values-prod.yaml
+      - name: Open promotion PR (review = production approval gate)
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: promote/${{ inputs.tag }}
+          title: "Promote ${{ inputs.tag }} to production"
+          commit-message: "chore(prod): promote image ${{ inputs.tag }}"
+          body: "Merging this PR makes ArgoCD roll the new version out to **prod**."
